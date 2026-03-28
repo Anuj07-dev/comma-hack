@@ -11,12 +11,14 @@ control==0.9.1  # Used for LQR controller synthesis
 Fiona  # Used in GpkgMapsDB.py
 geopandas>=0.12.1  # Used to read maps
 guppy3==3.1.2
-hydra-core==1.2.0  # Used for configs
+hydra-core==1.2.0
+PyYAML  # openpilot ONNX shape check + Hydra  # Used for configs
 joblib
 matplotlib  # Used for rendering
 nest_asyncio  # Used to nest event loops when running nuBoard/jupyter
 numpy==1.23.4
 opencv-python==4.9.0.80  # Used widely
+onnxruntime>=1.12.0  # OpenpilotAgent ONNX inference
 pandas    # Used widely
 Pillow    # Used widely to render images
 psutil  # Used widely to get the number of CPUs

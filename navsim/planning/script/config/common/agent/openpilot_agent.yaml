@@ -1,0 +1,51 @@
+_target_: navsim.agents.open_pilot_agent.OpenpilotAgent
+_convert_: 'all'
+
+# Point these at your comma exports, or override when checking shapes:
+#   --vision-model-path / --policy-model-path, or OPENPILOT_VISION_ONNX / OPENPILOT_POLICY_ONNX
+# Validate vs preprocessing:
+#   python -m navsim.planning.script.run_check_openpilot_onnx_shapes --vision-model-path ... --policy-model-path ...
+vision_model_path: "/home/akshat/openpilot/selfdrive/modeld/models/driving_vision.onnx"
+policy_model_path: "/home/akshat/openpilot/selfdrive/modeld/models/driving_policy.onnx"
+# Optional: comma ``driving_policy_metadata.pkl`` (defaults to same directory as policy_model_path)
+# policy_metadata_path: null
+
+trajectory_sampling:
+  _target_: nuplan.planning.simulation.trajectory.trajectory_sampling.TrajectorySampling
+  _convert_: 'all'
+  time_horizon: 4
+  interval_length: 0.5
+
+road_camera: cam_f0
+wide_camera: cam_l0
+steering_delay_s: 0.0
+
+# Flatten vision output and use numpy slice [start:end] for policy feature_buffer (default 512 floats)
+# feature_buffer_vision_flat_slice: [1064, 1576]
+# feature_buffer_vision_flat_slice: null  # use full vision tensor for feature buffer
+
+# Vision model: ONNX input name -> logical key (image_stream, wide_image_stream, image_concat)
+# vision_input_name_map:
+#   img: image_stream
+#   big_img: wide_image_stream
+
+# Policy model: ONNX input name -> logical key (desire, traffic_convention, ...)
+# policy_input_name_map:
+#   custom_desire: desire
+
+# Map policy ONNX input names -> vision ONNX output names (required if vision has multiple outputs)
+# or if auto-linking does not match your export):
+# policy_inputs_from_vision:
+#   features_buffer: hidden_state
+
+# If vision ONNX expects one flat image buffer (road + wide):
+# concatenate_image_streams: true
+# image_concat_input_name: input_imgs
+
+# Recurrent state on the policy model (paired by index):
+# recurrent_input_names: [initial_state]
+# recurrent_output_names: [new_state]
+
+# When plan autodetection fails:
+# plan_output_index: 0
+# plan_slice: null

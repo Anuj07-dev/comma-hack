@@ -117,21 +117,23 @@ class Lidar:
             return io.BytesIO(fp.read())
 
     @classmethod
-    def from_paths(cls, sensor_blobs_path: Path, lidar_path: Path, sensor_names: List[str]) -> Lidar:
+    def from_paths(
+        cls, sensor_blobs_path: Path, lidar_path: Optional[Path], sensor_names: List[str]
+    ) -> Lidar:
         """
         Loads lidar point cloud dataclass in log loading.
         :param sensor_blobs_path: root directory to sensor data
-        :param lidar_path: relative lidar path from logs.
+        :param lidar_path: relative lidar path from logs, or None if unavailable.
         :param sensor_names: list of sensor identifiers to load`
         :return: lidar point cloud dataclass
         """
 
         # NOTE: this could be extended to load specific LiDARs in the merged pc
-        if "lidar_pc" in sensor_names:
-            global_lidar_path = sensor_blobs_path / lidar_path
-            lidar_pc = LidarPointCloud.from_buffer(cls._load_bytes(global_lidar_path), "pcd").points
-            return Lidar(lidar_pc, lidar_path)
-        return Lidar()  # empty lidar
+        if lidar_path is None or "lidar_pc" not in sensor_names:
+            return Lidar()
+        global_lidar_path = sensor_blobs_path / lidar_path
+        lidar_pc = LidarPointCloud.from_buffer(cls._load_bytes(global_lidar_path), "pcd").points
+        return Lidar(lidar_pc, lidar_path)
 
 
 @dataclass
@@ -511,9 +513,10 @@ class Scene:
                 sensor_names=sensor_names,
             )
 
+            raw_lp = scene_dict_list[frame_idx]["lidar_path"]
             lidar = Lidar.from_paths(
                 sensor_blobs_path=sensor_blobs_path,
-                lidar_path=Path(scene_dict_list[frame_idx]["lidar_path"]),
+                lidar_path=Path(raw_lp) if raw_lp is not None else None,
                 sensor_names=sensor_names,
             )
 
