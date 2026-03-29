@@ -15,6 +15,8 @@ NAVSIM caveats (handled explicitly here):
 
 from __future__ import annotations
 
+import logging
+import os
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
@@ -23,6 +25,8 @@ import numpy as np
 import numpy.typing as npt
 
 from navsim.common.dataclasses import AgentInput, Camera, Scene
+
+logger = logging.getLogger(__name__)
 
 # openpilot temporal context: 5 s at 20 Hz
 OPENPILOT_TEMPORAL_STEPS: int = 25
@@ -52,8 +56,8 @@ def preprocessed_openpilot_tensor_shapes(
     shapes: Dict[str, Tuple[int, ...]] = {
         "desire": (OPENPILOT_TEMPORAL_STEPS, 8),
         "traffic_convention": (2,),
-        "lateral_control_params": (2,),
-        "prev_desired_curvature": (OPENPILOT_TEMPORAL_STEPS,),
+        # "lateral_control_params": (2,),
+        # "prev_desired_curvature": (OPENPILOT_TEMPORAL_STEPS,),
         "feature_buffer": (OPENPILOT_TEMPORAL_STEPS, 512),
     }
     if concatenate_image_streams:
@@ -76,16 +80,16 @@ class OpenpilotInputs:
     wide_image_stream: npt.NDArray[np.float32]
     desire: npt.NDArray[np.float32]  # (100, 8)
     traffic_convention: npt.NDArray[np.float32]  # (2,)
-    lateral_control_params: npt.NDArray[np.float32]  # (2,) speed, steering_delay
-    prev_desired_curvature: npt.NDArray[np.float32]  # (100,)
+    # lateral_control_params: npt.NDArray[np.float32]  # (2,) speed, steering_delay
+    # prev_desired_curvature: npt.NDArray[np.float32]  # (100,)
     feature_buffer: npt.NDArray[np.float32]  # (100, 512)
 
     def as_dict(self, flatten_images: bool = True) -> Dict[str, npt.NDArray[np.float32]]:
         out: Dict[str, npt.NDArray[np.float32]] = {
             "desire": self.desire,
             "traffic_convention": self.traffic_convention,
-            "lateral_control_params": self.lateral_control_params,
-            "prev_desired_curvature": self.prev_desired_curvature,
+            # "lateral_control_params": self.lateral_control_params,
+            # "prev_desired_curvature": self.prev_desired_curvature,
             "feature_buffer": self.feature_buffer,
         }
         if flatten_images:
@@ -185,6 +189,99 @@ def _stack_two_frame_yuv(
     return np.stack(imgs, axis=0).astype(np.float32)
 
 
+def _camera_rgb_u8_for_log(cam: Optional[Camera]) -> Optional[npt.NDArray[np.uint8]]:
+    """RGB uint8 (H, W, 3) for debug visualization; None if missing."""
+    if cam is None or cam.image is None:
+        return None
+    arr = np.asarray(cam.image)
+    if arr.ndim != 3 or arr.shape[2] != 3:
+        return None
+    if arr.dtype == np.uint8:
+        return arr
+    x = arr.astype(np.float32)
+    if np.nanmax(x) <= 1.0 + 1e-3:
+        x = np.clip(x, 0.0, 1.0) * 255.0
+    else:
+        x = np.clip(x, 0.0, 255.0)
+    return np.round(x).astype(np.uint8)
+
+
+def _yuv_stack_first_y_plane_u8(stack: npt.NDArray[np.float32]) -> Tuple[npt.NDArray[np.uint8], npt.NDArray[np.uint8]]:
+    """First Y subsample plane per temporal frame -> uint8 grayscale for logging."""
+    t0 = np.clip(stack[0, 0] * 255.0, 0, 255).astype(np.uint8)
+    t1 = np.clip(stack[1, 0] * 255.0, 0, 255).astype(np.uint8)
+    return t0, t1
+
+
+def _log_openpilot_vision_before_after(
+    *,
+    road_prev: Optional[Camera],
+    road_curr: Optional[Camera],
+    wide_prev: Optional[Camera],
+    wide_curr: Optional[Camera],
+    image_stack: npt.NDArray[np.float32],
+    wide_stack: npt.NDArray[np.float32],
+) -> None:
+    """Log shapes/stats; optionally write PNGs when NAVSIM_OPENPILOT_LOG_IMAGES is set."""
+    out_dir = None
+    write_files = bool(out_dir)
+    if write_files:
+        logger.info("openpilot vision debug: writing before/after PNGs under %s", out_dir)
+
+    def _log_rgb(name: str, cam: Optional[Camera]) -> None:
+        rgb = _camera_rgb_u8_for_log(cam)
+        if rgb is None:
+            logger.debug("openpilot vision before [%s]: (missing)", name)
+            return
+        logger.debug(
+            "openpilot vision before [%s]: shape=%s dtype=%s min=%s max=%s",
+            name,
+            rgb.shape,
+            rgb.dtype,
+            int(rgb.min()),
+            int(rgb.max()),
+        )
+        if write_files:
+            bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+            path = os.path.join(out_dir, f"before_{name}.png")
+            os.makedirs(out_dir, exist_ok=True)
+            cv2.imwrite(path, bgr)
+            logger.debug("openpilot vision before [%s]: wrote %s", name, path)
+
+    for label, c in (
+        ("road_prev", road_prev),
+        ("road_curr", road_curr),
+        ("wide_prev", wide_prev),
+        ("wide_curr", wide_curr),
+    ):
+        _log_rgb(label, c)
+
+    logger.debug(
+        "openpilot vision after [road stack]: shape=%s dtype=%s min=%.4f max=%.4f mean=%.4f",
+        image_stack.shape,
+        image_stack.dtype,
+        float(np.min(image_stack)),
+        float(np.max(image_stack)),
+        float(np.mean(image_stack)),
+    )
+    logger.debug(
+        "openpilot vision after [wide stack]: shape=%s dtype=%s min=%.4f max=%.4f mean=%.4f",
+        wide_stack.shape,
+        wide_stack.dtype,
+        float(np.min(wide_stack)),
+        float(np.max(wide_stack)),
+        float(np.mean(wide_stack)),
+    )
+    if write_files:
+        os.makedirs(out_dir, exist_ok=True)
+        for stream_name, stack in (("road", image_stack), ("wide", wide_stack)):
+            y0, y1 = _yuv_stack_first_y_plane_u8(stack)
+            for t, plane in enumerate((y0, y1)):
+                path = os.path.join(out_dir, f"after_{stream_name}_frame{t}_y_plane0.png")
+                cv2.imwrite(path, plane)
+                logger.debug("openpilot vision after [%s t=%d Y plane0]: wrote %s", stream_name, t, path)
+
+
 def _get_camera_image(agent_input: AgentInput, time_idx: int, name: str) -> Optional[Camera]:
     if time_idx < 0 or time_idx >= len(agent_input.cameras):
         return None
@@ -280,22 +377,20 @@ def build_openpilot_inputs_from_scene(
     image_stack = _stack_two_frame_yuv(road_prev, road_curr)
     wide_stack = _stack_two_frame_yuv(wide_prev, wide_curr)
 
+    _log_openpilot_vision_before_after(
+        road_prev=road_prev,
+        road_curr=road_curr,
+        wide_prev=wide_prev,
+        wide_curr=wide_curr,
+        image_stack=image_stack,
+        wide_stack=wide_stack,
+    )
+
     desire_rows = np.stack(
         [driving_command_to_desire8(es.driving_command) for es in agent_input.ego_statuses],
         axis=0,
     )
     desire = _upsample_history_to_100(desire_rows, len(agent_input.ego_statuses))
-
-    n_frames = len(agent_input.ego_statuses)
-    poses_hist = np.stack([es.ego_pose for es in agent_input.ego_statuses], axis=0)
-    kappa_segments = _history_curvatures_from_poses(poses_hist)
-    per_frame_k = _kappa_segments_to_per_frame(kappa_segments, n_frames)
-
-    prev_curv = _upsample_history_to_100(per_frame_k.astype(np.float32), n_frames).reshape(-1)
-
-    vel = np.asarray(agent_input.ego_statuses[-1].ego_velocity, dtype=np.float32).ravel()
-    speed = float(np.linalg.norm(vel[:2])) if vel.size >= 2 else float(np.linalg.norm(vel))
-    lateral = np.array([speed, steering_delay_s], dtype=np.float32)
 
     traffic = map_name_to_traffic_convention(scene.scene_metadata.map_name or "")
 
@@ -306,8 +401,6 @@ def build_openpilot_inputs_from_scene(
         wide_image_stream=wide_stack,
         desire=desire,
         traffic_convention=traffic,
-        lateral_control_params=lateral,
-        prev_desired_curvature=prev_curv,
         feature_buffer=features,
     )
 
