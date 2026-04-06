@@ -2,6 +2,8 @@
 
 **Comma Hackathon 2026** — Evaluating comma.ai's openpilot driving models inside the NAVSIM pseudo-simulation benchmark.
 
+[Presentation Slides](https://drive.google.com/file/d/1vo-DCOIiOtErj1X9fwz77irVx6XXCVNG/view?usp=sharing)
+
 ---
 
 ## Project Idea
